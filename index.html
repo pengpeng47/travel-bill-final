@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>旅程分帳管家 - 雲端同步版</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;900&display=swap');
+        body { font-family: 'Inter', -apple-system, "Microsoft JhengHei", sans-serif; -webkit-tap-highlight-color: transparent; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-item { animation: fadeIn 0.4s ease forwards; }
+        .participant-badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 6px; background: #f1f5f9; color: #64748b; font-weight: bold; margin-right: 4px; border: 1px solid #e2e8f0; }
+    </style>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+        import { getDatabase, ref, push, onValue, remove, child } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAe4v6e2HafhB4rJySwI8lR5F6VCD_-4QU",
+            authDomain: "travel-bill-e3b6e.firebaseapp.com",
+            databaseURL: "https://travel-bill-e3b6e-default-rtdb.firebaseio.com",
+            projectId: "travel-bill-e3b6e",
+            storageBucket: "travel-bill-e3b6e.firebasestorage.app",
+            messagingSenderId: "1009509450334",
+            appId: "1:1009509450334:web:45afcf5ade2c739d6c2acf"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        
+        window.fbRef = ref(db, 'expenses');
+        window.fbDb = db;
+        window.fbPush = push;
+        window.fbOnValue = onValue;
+        window.fbRemove = remove;
+        window.fbChild = child;
+    </script>
+</head>
+<body class="bg-gray-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const categories = [
+            { id: 'food', label: '食物', icon: '🍱', color: 'bg-orange-500', light: 'bg-orange-50', text: 'text-orange-600' },
+            { id: 'transport', label: '交通', icon: '🚗', color: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-600' },
+            { id: 'hotel', label: '住宿', icon: '🏨', color: 'bg-indigo-500', light: 'bg-indigo-50', text: 'text-indigo-600' },
+            { id: 'ticket', label: '門票', icon: '🎫', color: 'bg-purple-500', light: 'bg-purple-50', text: 'text-purple-600' },
+            { id: 'flight', label: '機票', icon: '✈️', color: 'bg-sky-400', light: 'bg-sky-50', text: 'text-sky-600' },
+            { id: 'other', label: '其他', icon: '🎸', color: 'bg-rose-500', light: 'bg-rose-50', text: 'text-rose-600' }
+        ];
+
+        const App = () => {
+            const participants = ['林新穎', '鄭可均', '彭心瑜'];
+            const [expenses, setExpenses] = useState([]);
+            const [rate, setRate] = useState(0.21);
+            const [formData, setFormData] = useState({
+                name: '', amount: '', currency: 'JPY', payer: '林新穎', splitWith: [...participants], category: 'food'
+            });
+            const [toast, setToast] = useState({ show: false, msg: '' });
+
+            const showToast = (msg) => {
+                setToast({ show: true, msg });
+                setTimeout(() => setToast({ show: false, msg: '' }), 3000);
+            };
+
+            useEffect(() => {
+                if (!window.fbOnValue) return;
+                const unsubscribe = window.fbOnValue(window.fbRef, (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        const list = Object.keys(data).map(key => ({
+                            ...data[key],
+                            fbKey: key
+                        })).reverse();
+                        setExpenses(list);
+                    } else {
+                        setExpenses([]);
+                    }
+                });
+                return () => unsubscribe();
+            }, []);
+
+            const handleAdd = (e) => {
+                e.preventDefault();
+                if (!formData.name || !formData.amount) return;
+                
+                const newEntry = {
+                    ...formData,
+                    id: Date.now(),
+                    amount: parseFloat(formData.amount),
+                    rateAtTime: rate,
+                    createdAt: new Date().toLocaleString()
+                };
+
+                window.fbPush(window.fbRef, newEntry);
+                setFormData(prev => ({ ...prev, name: '', amount: '' }));
+                showToast("✅ 已同步至雲端！");
+            };
+
+            const handleDelete = (fbKey) => {
+                if (window.confirm('確定要刪除這筆紀錄嗎？')) {
+                    const itemRef = window.fbChild(window.fbRef, fbKey);
+                    window.fbRemove(itemRef)
+                        .then(() => showToast("🗑️ 資料已刪除"))
+                        .catch(() => showToast("❌ 刪除失敗"));
+                }
+            };
+
+            const toggleParticipant = (name) => {
+                setFormData(prev => ({
+                    ...prev,
+                    splitWith: prev.splitWith.includes(name)
+                        ? prev.splitWith.filter(n => n !== name)
+                        : [...prev.splitWith, name]
+                }));
+            };
+
+            // 匯出 CSV 功能
+            const exportToCSV = () => {
+                if (expenses.length === 0) {
+                    showToast("目前沒有資料可以匯出");
+                    return;
+                }
+
+                let csvContent = "\ufeff"; // UTF-8 BOM，解決 Excel 開啟亂碼問題
+                csvContent += "日期,類別,項目,金額,幣別,匯率,墊款人,分帳對象,換算台幣\n";
+
+                expenses.forEach(ex => {
+                    const cat = categories.find(c => c.id === ex.category)?.label || '其他';
+                    const twdVal = Math.round(ex.currency === 'JPY' ? ex.amount * ex.rateAtTime : ex.amount);
+                    const row = [
+                        ex.createdAt,
+                        cat,
+                        ex.name,
+                        ex.amount,
+                        ex.currency,
+                        ex.rateAtTime,
+                        ex.payer,
+                        ex.splitWith.join(';'),
+                        twdVal
+                    ].join(",");
+                    csvContent += row + "\n";
+                });
+
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.setAttribute("href", url);
+                link.setAttribute("download", `日本行帳務明細_${new Date().toLocaleDateString()}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showToast("📂 已匯出 CSV 檔案");
+            };
+
+            const summary = useMemo(() => {
+                const balances = { '林新穎': 0, '鄭可均': 0, '彭心瑜': 0 };
+                expenses.forEach(ex => {
+                    const twdVal = ex.currency === 'JPY' ? ex.amount * ex.rateAtTime : ex.amount;
+                    balances[ex.payer] += twdVal;
+                    const share = twdVal / (ex.splitWith.length || 1);
+                    ex.splitWith.forEach(p => { if(balances.hasOwnProperty(p)) balances[p] -= share; });
+                });
+                return participants.map(name => ({ name, balance: balances[name] }));
+            }, [expenses]);
+
+            const copyReport = () => {
+                let report = `📊 旅程結算報告 (TWD)\n------------------\n`;
+                summary.forEach(s => {
+                    report += `${s.name}: ${s.balance >= 0 ? '應收' : '應補'} $${Math.abs(Math.round(s.balance))}\n`;
+                });
+                report += `------------------\n總支出: $${Math.round(expenses.reduce((acc, ex) => acc + (ex.currency === 'JPY' ? ex.amount * ex.rateAtTime : ex.amount), 0))}\n日期: ${new Date().toLocaleDateString()}`;
+                navigator.clipboard.writeText(report);
+                showToast("📜 報告已複製！");
+            };
+
+            const currentCategory = categories.find(c => c.id === formData.category);
+
+            return (
+                <div className="max-w-md mx-auto min-h-screen bg-white pb-24 shadow-2xl relative">
+                    <header className="sticky top-0 bg-white/95 backdrop-blur-md border-b z-30 px-6 py-5 flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 ${currentCategory.color} rounded-2xl flex items-center justify-center text-white shadow-lg`}>
+                                <i className="fa-solid fa-plane"></i>
+                            </div>
+                            <h1 className="text-xl font-black tracking-tight text-slate-800">日本行分帳</h1>
+                        </div>
+                        {/* 匯出按鈕 */}
+                        <button onClick={exportToCSV} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 transition-colors">
+                            <i className="fa-solid fa-file-export"></i>
+                        </button>
+                    </header>
+
+                    <div className="p-6">
+                        {/* 餘額卡片 */}
+                        <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden mb-8">
+                            <div className="relative z-10">
+                                <div className="flex justify-between items-center mb-6">
+                                    <p className="text-slate-400 text-[10px] font-bold tracking-widest uppercase">結算餘額 (TWD)</p>
+                                    <button onClick={copyReport} className="text-[10px] bg-white/10 hover:bg-white/20 px-3 py-1 rounded-full font-bold">複製報告</button>
+                                </div>
+                                <div className="grid grid-cols-3 gap-4">
+                                    {summary.map(s => (
+                                        <div key={s.name} className="text-center border-r border-white/5 last:border-none">
+                                            <p className="text-[10px] text-slate-500 mb-2 font-bold uppercase">{s.name}</p>
+                                            <p className={`text-lg font-black font-mono ${s.balance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                {s.balance >= 0 ? '+' : ''}{Math.round(s.balance)}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 記帳表單 */}
+                        <div className="bg-white rounded-[2.5rem] border border-gray-100 p-2 mb-8 shadow-sm">
+                            <form onSubmit={handleAdd} className="space-y-6 p-4">
+                                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                                    {categories.map(cat => (
+                                        <button key={cat.id} type="button" onClick={() => setFormData({...formData, category: cat.id})} className="flex flex-col items-center gap-2 shrink-0">
+                                            <div className={`w-14 h-14 flex items-center justify-center rounded-[1.25rem] transition-all ${formData.category === cat.id ? `${cat.color} text-white scale-110 shadow-lg` : `bg-gray-50 text-gray-400 border border-gray-100`}`}>
+                                                <span className="text-2xl">{cat.icon}</span>
+                                            </div>
+                                            <span className={`text-[10px] font-black ${formData.category === cat.id ? cat.text : 'text-gray-400'}`}>{cat.label}</span>
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div className="space-y-4">
+                                    <input type="text" placeholder="項目名稱" className="w-full p-5 bg-gray-50 rounded-3xl border-none font-bold text-sm focus:ring-2 focus:ring-slate-200 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} required />
+                                    <div className="flex gap-2">
+                                        <select className="bg-slate-800 text-white font-bold rounded-3xl px-4 text-xs appearance-none" value={formData.currency} onChange={e => setFormData({...formData, currency: e.target.value})}>
+                                            <option value="JPY">¥ JPY</option>
+                                            <option value="TWD">$ TWD</option>
+                                        </select>
+                                        <input type="number" placeholder="金額" className="flex-1 p-5 bg-gray-50 rounded-3xl border-none font-black text-xl outline-none" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} required />
+                                    </div>
+                                    <div className="flex justify-between items-center px-4">
+                                        <label className="text-[10px] font-black text-gray-300 uppercase">目前匯率 {rate}</label>
+                                        <input type="number" step="0.001" className="w-20 text-right font-mono font-bold text-blue-600 border-b border-dashed border-gray-200 bg-transparent outline-none" value={rate} onChange={e => setRate(parseFloat(e.target.value) || 0)} />
+                                    </div>
+                                </div>
+
+                                <div className="bg-gray-50 p-6 rounded-[2rem] space-y-5">
+                                    <div>
+                                        <p className="text-[9px] font-black text-gray-400 mb-3 uppercase tracking-widest">誰墊的錢？</p>
+                                        <div className="flex gap-2">
+                                            {participants.map(p => (
+                                                <button key={p} type="button" onClick={() => setFormData({...formData, payer: p})} className={`flex-1 py-3 text-[11px] font-black rounded-2xl border transition-all ${formData.payer === p ? 'bg-slate-900 text-white border-slate-900 shadow-lg' : 'bg-white text-gray-400 border-gray-100'}`}>{p}</button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <p className="text-[9px] font-black text-gray-400 mb-3 uppercase tracking-widest">算誰的份？</p>
+                                        <div className="flex gap-2">
+                                            {participants.map(p => (
+                                                <button key={p} type="button" onClick={() => toggleParticipant(p)} className={`flex-1 py-3 text-[11px] font-black rounded-2xl border transition-all flex items-center justify-center gap-1 ${formData.splitWith.includes(p) ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-white text-gray-300 border-gray-50'}`}>
+                                                    {formData.splitWith.includes(p) && <i className="fa-solid fa-check-circle"></i>} {p}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="submit" className={`w-full ${currentCategory.color} text-white py-5 rounded-3xl font-black text-lg shadow-xl active:scale-95 transition-all`}>
+                                    加入雲端記帳
+                                </button>
+                            </form>
+                        </div>
+
+                        {/* 歷史紀錄 */}
+                        <div className="space-y-3">
+                            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-4">歷史消費 ({expenses.length})</h3>
+                            {expenses.length === 0 ? (
+                                <div className="text-center py-16 bg-gray-50 rounded-[2.5rem] text-gray-300 text-[11px] font-bold uppercase">目前無資料</div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {expenses.map(ex => {
+                                        const cat = categories.find(c => c.id === ex.category);
+                                        return (
+                                            <div key={ex.fbKey} className="animate-item bg-white p-5 rounded-3xl border border-gray-50 flex items-center gap-4 shadow-sm">
+                                                <div className={`w-12 h-12 ${cat?.light} rounded-2xl flex items-center justify-center text-2xl`}>{cat?.icon}</div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex justify-between items-center">
+                                                        <h4 className="font-bold text-sm text-slate-800 truncate">{ex.name}</h4>
+                                                        <span className={`font-black text-sm font-mono ${cat?.text}`}>{ex.currency === 'JPY' ? '¥' : '$'}{Math.round(ex.amount).toLocaleString()}</span>
+                                                    </div>
+                                                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                                                        <span className="text-[9px] text-blue-600 font-bold px-2 py-0.5 bg-blue-50 rounded-lg">{ex.payer}</span>
+                                                        <div className="flex items-center gap-1">
+                                                            {ex.splitWith.map(person => (
+                                                                <span key={person} className="participant-badge">{person}</span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => handleDelete(ex.fbKey)} className="text-gray-200 hover:text-rose-500 transition-colors ml-2">
+                                                    <i className="fa-solid fa-circle-xmark text-lg"></i>
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {toast.show && (
+                        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50">
+                            <div className="bg-slate-800 text-white text-[11px] font-black px-6 py-3 rounded-full shadow-2xl animate-item">
+                                {toast.msg}
+                            </div>
+                        </div>
+                    )}
+
+                    <footer className="fixed bottom-0 left-0 right-0 p-5 bg-white/80 backdrop-blur-md border-t text-center">
+                         <p className="text-[9px] text-gray-400 font-black tracking-widest uppercase mb-1">林新穎 • 鄭可均 • 彭心瑜 專屬雲端版</p>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
